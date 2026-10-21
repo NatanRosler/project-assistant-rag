@@ -29,6 +29,20 @@ def dividir(texto):
     return trechos
 
 
+def limpar(texto):
+    """Tira as linhas de cabeçalho e rodapé que se repetem em todas as páginas."""
+    boas = []
+    for linha in texto.splitlines():
+        if linha.startswith("Vetor Engenharia ·"):
+            continue
+        if linha.startswith("Página "):
+            continue
+        if "Documento fictício" in linha:
+            continue
+        boas.append(linha)
+    return "\n".join(boas)
+
+
 def vetores(textos):
     """Manda vários textos de uma vez e recebe um vetor para cada um."""
     r = ia.embeddings.create(model=MODELO, input=textos)
@@ -48,7 +62,7 @@ for pdf in sorted(PASTA.glob("*.pdf")):
 
     linhas = []
     for numero, pagina in enumerate(PdfReader(pdf).pages, start=1):             # (3)
-        texto = pagina.extract_text() or ""
+        texto = limpar(pagina.extract_text() or "")
         for trecho in dividir(texto):
             linhas.append(
                 # (4)
