@@ -34,6 +34,18 @@ def calcular_dias_uteis(data_inicio, dias):
     return {"data_final": d.isoformat()}
 
 
+def dias_uteis_entre(data_inicio, data_fim):
+    d = date.fromisoformat(data_inicio) + \
+        timedelta(days=1)   # começa no dia seguinte
+    fim = date.fromisoformat(data_fim)
+    contados = 0
+    while d <= fim:
+        if d.weekday() < 5 and d.isoformat() not in FERIADOS:      # dia de semana e não é feriado
+            contados += 1
+        d += timedelta(days=1)                                  # próximo dia
+    return {"dias_uteis": contados}
+
+
 def lancar_horas(projeto, etapa, data, duracao_min):
     return {"ok": True, "mensagem": f"{duracao_min} min lançados em {projeto}, {etapa}, {data}."}
 
@@ -55,7 +67,8 @@ def buscar_documentos(pergunta):
 
 FUNCOES = {"ver_projeto": ver_projeto,
            "calcular_dias_uteis": calcular_dias_uteis, "lancar_horas": lancar_horas,
-           "buscar_documentos": buscar_documentos}
+           "buscar_documentos": buscar_documentos,
+           "dias_uteis_entre": dias_uteis_entre}
 ESCRITA = {"lancar_horas"}
 
 # ---------- 2. O catálogo: a descrição que a IA recebe ----------
@@ -89,7 +102,15 @@ FERRAMENTAS = [
         "NÃO use para horas, andamento ou prazo de projeto (para isso existe ver_projeto).",
         "parameters": {"type": "object", "properties": {
             "pergunta": {"type": "string", "description": "Texto da busca, com as palavras-chave"}},
-            "required": ["pergunta"]}}}
+            "required": ["pergunta"]}}},
+    {"type": "function", "function": {
+        "name": "dias_uteis_entre",
+        "description": "Conta quantos dias úteis existem entre duas datas, pulando fins de semana "
+        "e feriados. Use para medir atraso ou folga em relação à data de entrega.",
+        "parameters": {"type": "object", "properties": {
+            "data_inicio": {"type": "string", "description": "AAAA-MM-DD (não entra na contagem)"},
+            "data_fim": {"type": "string", "description": "AAAA-MM-DD (entra na contagem)"}},
+            "required": ["data_inicio", "data_fim"]}}},
 ]
 
 INSTRUCOES = f"""Você é o assistente do painel de projetos de um engenheiro mecânico que projeta
@@ -98,7 +119,7 @@ Use as ferramentas para buscar dados e fazer contas. Nunca invente números nem 
 Informação técnica e de procedimento vem só dos documentos (buscar_documentos). Se não achar, diga que não encontrou.
 Ações que alteram dados: chame a ferramenta; o sistema pede a confirmação.
 Responda direto, em português, curto, sem comentar o que você está fazendo.
-Ao usar informação dos documentos, cite a fonte assim: [nome do documento, p. X]."""
+Cite a fonte em toda informação dos documentos, sempre com o nome completo: [nome-do-arquivo.pdf, p. X]. Nunca cite só a página."""
 
 # ---------- 3. O laço do agente ----------
 
