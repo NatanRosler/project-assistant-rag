@@ -17,10 +17,16 @@ FERIADOS = {"2026-11-02", "2026-11-15", "2026-11-20", "2026-12-25"}
 
 
 def ver_projeto(codigo):
-    if codigo != "PRJ060000":
+    r = banco.table("projetos").select("*").eq("codigo", codigo).execute()
+    if not r.data:
         return {"erro": f"Projeto {codigo} não encontrado."}
-    return {"codigo": "PRJ060000", "descricao": "Esteira de roletes 6 m", "concluido_pct": 59,
-            "horas_lancadas": 168, "horas_previstas": 275, "entrega": "2026-11-10"}
+    p = r.data[0]
+    l = banco.table("lancamentos").select(
+        "duracao_min").eq("projeto_id", p["id"]).execute()
+    minutos = sum(x["duracao_min"] for x in l.data)
+    return {"codigo": p["codigo"], "descricao": p["descricao"], "cliente": p["cliente"],
+            "concluido_pct": p["concluido_pct"], "horas_lancadas": round(minutos / 60, 1),
+            "horas_previstas": p["horas_previstas"], "entrega": p["entrega"]}
 
 
 def calcular_dias_uteis(data_inicio, dias):
@@ -47,7 +53,13 @@ def dias_uteis_entre(data_inicio, data_fim):
 
 
 def lancar_horas(projeto, etapa, data, duracao_min):
-    return {"ok": True, "mensagem": f"{duracao_min} min lançados em {projeto}, {etapa}, {data}."}
+    r = banco.table("projetos").select("*").eq("codigo", projeto).execute()
+    if not r.data:
+        return {"erro": f"Projeto {projeto} não encontrado."}
+    p = r.data[0]
+    banco.table("lancamentos").insert({"projeto_id": p["id"], "etapa": etapa,
+                                       "data": data, "duracao_min": duracao_min}).execute()
+    return {"ok": True, "mensagem": f"{duracao_min / 60:g} h lançados em {projeto}, {etapa}, {data}."}
 
 
 def buscar_documentos(pergunta):
@@ -151,10 +163,10 @@ def perguntar(pergunta):
     print("Parei: passos demais.")
 
 
-for p in ["Quanto falta no PRJ060000?",
-          "Qual a tensão correta da corrente da esteira?",
-          "Como é o bloqueio e etiquetagem antes da manutenção?",
-          "O PRJ060000 atrasa se eu precisar de mais 10 dias úteis a partir de hoje?",
-          "Qual a cor favorita do Paulo?",]:
+for p in ["Quanto falta no PRJ070000?",                       # 66 h de 190, entrega 27/11
+        "Lança 2 horas de Modelagem 3D hoje no PRJ070000",  # vai pedir confirmação: responda s
+        "Quanto falta no PRJ070000?",                       # agora tem que dar 68 h
+        "Quanto falta no PRJ999999?",                       # não existe
+        "Qual a tensão correta da corrente da esteira?",]:
     print("\n" + "=" * 60 + f"\nVOCÊ: {p}")
     perguntar(p)
