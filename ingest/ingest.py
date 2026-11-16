@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -14,18 +15,23 @@ banco = create_client(os.getenv("SUPABASE_URL"),
 PASTA = Path("doc/pdfs")
 MODELO = "openai/text-embedding-3-small"
 TAMANHO = 200  # palavras por trecho
-SOBRA = 40     # palavras repetidas entre um trecho e o seguinte
 
 
 def dividir(texto):
-    """Corta o texto de uma página em trechos de até TAMANHO palavras."""
-    palavras = texto.split()
+    """Junta frases inteiras em trechos de até TAMANHO palavras."""
+    frases = re.split(
+        r"(?<=[.!?])\s+", " ".join(texto.split()))   # quebra depois de . ! ?
     trechos = []
-    passo = TAMANHO - SOBRA                                # (1)
-    for inicio in range(0, len(palavras), passo):
-        trechos.append(" ".join(palavras[inicio:inicio + TAMANHO]))
-        if inicio + TAMANHO >= len(palavras):
-            break
+    atual = []                       # frases do trecho que está sendo montado
+    for frase in frases:
+        palavras_atual = sum(len(f.split()) for f in atual)
+        if atual and palavras_atual + len(frase.split()) > TAMANHO:
+            trechos.append(" ".join(atual))      # fecha o trecho
+            # o próximo começa repetindo a última frase
+            atual = atual[-1:]
+        atual.append(frase)
+    if atual:
+        trechos.append(" ".join(atual))        # não esquecer o último
     return trechos
 
 
@@ -40,7 +46,7 @@ def limpar(texto):
         if "Documento fictício" in linha:
             continue
         boas.append(linha)
-    return "\n".join(boas)
+    return "\n".join(boas).replace("\x7f", "-")
 
 
 def vetores(textos):
