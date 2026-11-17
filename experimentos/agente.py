@@ -245,37 +245,85 @@ Responda direto, em português, curto, sem comentar o que você está fazendo.
 Ao calcular, diga de qual documento veio cada dado de entrada.
 Cite a fonte em toda informação dos documentos, sempre com o nome completo: [nome-do-arquivo.pdf, p. X]. Nunca cite só a página."""
 
-# ---------- 3. O laço do agente ----------
+# ---------- 3. O motor do agente ----------
+# Antes o laço fazia tudo de uma vez e parava no input() para confirmar.
+# Numa tela web não existe input(): a confirmação é um botão, que chega DEPOIS.
+# Por isso o laço agora é dividido em duas funções:
+#   avancar()  → roda até ter a resposta final OU até precisar de confirmação, e PARA;
+#   decidir()  → recebe o "sim" ou "não" do usuário e continua de onde parou.
+
+
+def executar(mensagens, chamada, passos, ok=True):
+    """Roda uma ferramenta (ou registra que o usuário recusou) e guarda o resultado."""
+    if ok:
+        resultado = FUNCOES[chamada["nome"]](**chamada["args"])
+    else:
+        resultado = {"erro": "O usuário não confirmou."}
+    passos.append({"nome": chamada["nome"], "args": chamada["args"], "resultado": resultado})
+    mensagens.append({"role": "tool", "tool_call_id": chamada["id"],
+                      "content": json.dumps(resultado, ensure_ascii=False)})
+
+
+def avancar(mensagens, pendentes=None):
+    """Roda o agente até a resposta final ou até uma ferramenta de escrita.
+
+    Devolve um dicionário:
+      {"tipo": "resposta",  "texto": ..., "passos": [...]}
+      {"tipo": "confirmar", "chamada": {...}, "pendentes": [...], "passos": [...]}
+    """
+    passos = []
+    for _ in range(8):  # limite de segurança
+        if not pendentes:
+            r = ia.chat.completions.create(
+                model=MODELO_CHAT, messages=mensagens, tools=FERRAMENTAS, temperature=0)
+            msg = r.choices[0].message
+            if not msg.tool_calls:  # resposta final
+                mensagens.append({"role": "assistant", "content": msg.content})
+                return {"tipo": "resposta", "texto": msg.content, "passos": passos}
+            mensagens.append(msg.model_dump(exclude_none=True))
+            pendentes = [{"id": c.id, "nome": c.function.name,
+                          "args": json.loads(c.function.arguments)} for c in msg.tool_calls]
+        while pendentes:
+            chamada = pendentes[0]
+            if chamada["nome"] in ESCRITA:  # para e pede confirmação
+                return {"tipo": "confirmar", "chamada": chamada,
+                        "pendentes": pendentes, "passos": passos}
+            pendentes.pop(0)
+            executar(mensagens, chamada, passos)
+    return {"tipo": "resposta", "texto": "Parei: passos demais.", "passos": passos}
+
+
+def decidir(mensagens, pendentes, ok):
+    """Continua depois do Confirmar (ok=True) ou do Cancelar (ok=False)."""
+    passos = []
+    executar(mensagens, pendentes.pop(0), passos, ok)
+    r = avancar(mensagens, pendentes)
+    r["passos"] = passos + r["passos"]
+    return r
+
+
+def nova_conversa():
+    return [{"role": "system", "content": INSTRUCOES}]
 
 
 def perguntar(pergunta):
-    mensagens = [{"role": "system", "content": INSTRUCOES},
-                 {"role": "user", "content": pergunta}]
-    for passo in range(8):
-        r = ia.chat.completions.create(
-            model=MODELO_CHAT, messages=mensagens, tools=FERRAMENTAS, temperature=0)
-        msg = r.choices[0].message
-        if not msg.tool_calls:
-            print(f"\nIA: {msg.content}")
+    """Modo terminal, para os testes: usa o mesmo motor, com input() no lugar do botão."""
+    mensagens = nova_conversa() + [{"role": "user", "content": pergunta}]
+    r = avancar(mensagens)
+    while True:
+        for p in r["passos"]:
+            print(f"  → {p['nome']}({p['args']})\n  ← {p['resultado']}")
+        if r["tipo"] == "resposta":
+            print(f"\nIA: {r['texto']}")
             return
-        mensagens.append(msg.model_dump(exclude_none=True))
-        for chamada in msg.tool_calls:
-            nome = chamada.function.name
-            args = json.loads(chamada.function.arguments)
-            print(f"  → a IA pediu: {nome}({args})")
-            if nome in ESCRITA:
-                ok = input("    Confirmar? (s/n) ").strip().lower() == "s"
-                resultado = FUNCOES[nome](
-                    **args) if ok else {"erro": "O usuário não confirmou."}
-            else:
-                resultado = FUNCOES[nome](**args)
-            print(f"  ← resultado: {resultado}")
-            mensagens.append({"role": "tool", "tool_call_id": chamada.id,
-                              "content": json.dumps(resultado, ensure_ascii=False)})
-    print("Parei: passos demais.")
+        c = r["chamada"]
+        print(f"  → a IA quer: {c['nome']}({c['args']})")
+        ok = input("    Confirmar? (s/n) ").strip().lower() == "s"
+        r = decidir(mensagens, r["pendentes"], ok)
 
 
-for p in ["Calcula a potência do transportador do PRJ070000 com rosca de 250 mm e salva no projeto",
-          "Quais cálculos já foram feitos no PRJ070000?",]:
-    print("\n" + "=" * 60 + f"\nVOCÊ: {p}")
-    perguntar(p)
+if __name__ == "__main__":
+    for p in ["Calcula a potência do transportador do PRJ070000 com rosca de 250 mm e salva no projeto",
+              "Quais cálculos já foram feitos no PRJ070000?"]:
+        print("\n" + "=" * 60 + f"\nVOCÊ: {p}")
+        perguntar(p)
