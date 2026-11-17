@@ -108,13 +108,44 @@ def buscar_documentos(pergunta):
     ]}
 
 
+def salvar_calculo(projeto, tipo, entradas, fontes):
+    r = banco.table("projetos").select("*").eq("codigo", projeto).execute()
+    if not r.data:
+        return {"erro": f"Projeto {projeto} não encontrado."}
+    p = r.data[0]
+    if tipo not in CALCULOS:
+        return {"erro": f"Tipo de cálculo {tipo} desconhecido."}
+    try:
+        resultado = CALCULOS[tipo](**entradas)        # refaz a conta em Python
+    except TypeError as e:
+        return {"erro": f"Entradas inválidas para {tipo}: {e}"}
+    banco.table("calculos").insert({"projeto_id": p["id"], "tipo": tipo,
+                                    "entradas": entradas, "resultado": resultado, "fontes": fontes}).execute()
+    return {"ok": True, "resultado": resultado}
+
+
+def ver_calculos(projeto):
+    r = banco.table("projetos").select("*").eq("codigo", projeto).execute()
+    if not r.data:
+        return {"erro": f"Projeto {projeto} não encontrado."}
+    p = r.data[0]
+    c = banco.table("calculos").select("tipo, entradas, resultado, fontes, criado_em") \
+        .eq("projeto_id", p["id"]).order("criado_em", desc=True).execute()
+    if not c.data:
+        return {"resultado": f"Nenhum cálculo salvo no {projeto}."}
+    return {"calculos": c.data}
+
+
+CALCULOS = {"potencia_helicoidal": potencia_helicoidal}
 FUNCOES = {"ver_projeto": ver_projeto,
            "calcular_dias_uteis": calcular_dias_uteis, "lancar_horas": lancar_horas,
            "buscar_documentos": buscar_documentos,
            "dias_uteis_entre": dias_uteis_entre,
            "salvar_documento_projeto": salvar_documento_projeto,
-           "potencia_helicoidal": potencia_helicoidal}
-ESCRITA = {"lancar_horas", "salvar_documento_projeto"}
+           "potencia_helicoidal": potencia_helicoidal,
+           "salvar_calculo": salvar_calculo,
+           "ver_calculos": ver_calculos}
+ESCRITA = {"lancar_horas", "salvar_documento_projeto", "salvar_calculo"}
 
 # ---------- 2. O catálogo: a descrição que a IA recebe ----------
 FERRAMENTAS = [
@@ -180,6 +211,29 @@ FERRAMENTAS = [
             "diametro_m": {"type": "number", "description": "Diâmetro da rosca em METROS (250 mm = 0.25)"}},
             "required": ["vazao_m3h", "densidade_t_m3", "comprimento_m",
                          "inclinacao_graus", "c0", "diametro_m"]}}},
+    {"type": "function", "function": {
+        "name": "salvar_calculo",
+        "description": "Salva um cálculo dentro de um projeto. Use depois de calcular, passando as "
+        "MESMAS entradas usadas no cálculo: o sistema refaz a conta antes de gravar. Chame direto "
+        "quando o pedido estiver claro: o sistema mostra uma confirmação ao usuário.",
+        "parameters": {"type": "object", "properties": {
+            "projeto": {"type": "string", "description": "Código do projeto, ex.: PRJ070000"},
+            "tipo": {"type": "string", "enum": ["potencia_helicoidal"],
+                     "description": "Nome da ferramenta de cálculo usada"},
+            "entradas": {"type": "object",
+                         "description": "Os mesmos parâmetros passados para a ferramenta de cálculo"},
+            "fontes": {"type": "object",
+                       "description": "De onde veio cada entrada, ex.: "
+                       "{\"vazao_m3h\": \"proposta-PRJ070000-transportador-helicoidal.pdf, p. 1\", "
+                       "\"diametro_m\": \"informado pelo usuário\"}"}},
+            "required": ["projeto", "tipo", "entradas", "fontes"]}}},
+    {"type": "function", "function": {
+        "name": "ver_calculos",
+        "description": "Lista os cálculos já salvos num projeto, do mais novo para o mais antigo, "
+        "com entradas, resultado e fontes. Use quando perguntarem por cálculos feitos antes.",
+        "parameters": {"type": "object", "properties": {
+            "projeto": {"type": "string", "description": "Código do projeto, ex.: PRJ070000"}},
+            "required": ["projeto"]}}},
 ]
 
 INSTRUCOES = f"""Você é o assistente do painel de projetos de um engenheiro mecânico que projeta
@@ -197,7 +251,7 @@ Cite a fonte em toda informação dos documentos, sempre com o nome completo: [n
 def perguntar(pergunta):
     mensagens = [{"role": "system", "content": INSTRUCOES},
                  {"role": "user", "content": pergunta}]
-    for passo in range(5):
+    for passo in range(8):
         r = ia.chat.completions.create(
             model=MODELO_CHAT, messages=mensagens, tools=FERRAMENTAS, temperature=0)
         msg = r.choices[0].message
@@ -221,7 +275,7 @@ def perguntar(pergunta):
     print("Parei: passos demais.")
 
 
-for p in ["Salva o arquivo doc/novos/ficha-material-PRJ070000.pdf no projeto PRJ070000",
-          "Calcula a potência do transportador do PRJ070000 com rosca de 250 mm de diâmetro"]:
+for p in ["Calcula a potência do transportador do PRJ070000 com rosca de 250 mm e salva no projeto",
+          "Quais cálculos já foram feitos no PRJ070000?",]:
     print("\n" + "=" * 60 + f"\nVOCÊ: {p}")
     perguntar(p)
