@@ -4,6 +4,8 @@ from datetime import date, timedelta
 from dotenv import load_dotenv
 from openai import OpenAI
 from supabase import create_client
+from pathlib import Path
+from ingest.ingest import indexar_pdf
 
 load_dotenv()
 ia = OpenAI(base_url="https://openrouter.ai/api/v1",
@@ -14,6 +16,20 @@ MODELO_CHAT = os.getenv("MODELO_CHAT")
 LIMITE = 0.30
 # ---------- 1. As ferramentas "de verdade" (aqui, de mentira) ----------
 FERIADOS = {"2026-11-02", "2026-11-15", "2026-11-20", "2026-12-25"}
+
+
+def salvar_documento_projeto(caminho, projeto):
+    r = banco.table("projetos").select("*").eq("codigo", projeto).execute()
+    if not r.data:
+        return {"erro": f"Projeto {projeto} não encontrado."}
+    p = r.data[0]
+    arquivo = Path(caminho)
+    if not arquivo.exists():
+        return {"erro": f"Arquivo {caminho} não encontrado."}
+    n = indexar_pdf(arquivo, p["id"])
+    if n == 0:
+        return {"erro": f"{arquivo.name} já estava salvo."}
+    return {"ok": True, "mensagem": f"{arquivo.name} salvo no {projeto} ({n} trechos)."}
 
 
 def ver_projeto(codigo):
@@ -80,8 +96,9 @@ def buscar_documentos(pergunta):
 FUNCOES = {"ver_projeto": ver_projeto,
            "calcular_dias_uteis": calcular_dias_uteis, "lancar_horas": lancar_horas,
            "buscar_documentos": buscar_documentos,
-           "dias_uteis_entre": dias_uteis_entre}
-ESCRITA = {"lancar_horas"}
+           "dias_uteis_entre": dias_uteis_entre,
+           "salvar_documento_projeto": salvar_documento_projeto}
+ESCRITA = {"lancar_horas", "salvar_documento_projeto"}
 
 # ---------- 2. O catálogo: a descrição que a IA recebe ----------
 FERRAMENTAS = [
@@ -123,6 +140,14 @@ FERRAMENTAS = [
             "data_inicio": {"type": "string", "description": "AAAA-MM-DD (não entra na contagem)"},
             "data_fim": {"type": "string", "description": "AAAA-MM-DD (entra na contagem)"}},
             "required": ["data_inicio", "data_fim"]}}},
+    {"type": "function", "function": {
+        "name": "salvar_documento_projeto",
+        "description": "Salva um arquivo PDF dentro de um projeto e o deixa disponível para busca. "
+        "Chame direto quando o pedido estiver claro: o sistema mostra uma confirmação ao usuário.",
+        "parameters": {"type": "object", "properties": {
+            "caminho": {"type": "string", "description": "Caminho do arquivo PDF, ex.: doc/novos/ficha.pdf"},
+            "projeto": {"type": "string", "description": "Código do projeto, ex.: PRJ070000"}},
+            "required": ["caminho", "projeto"]}}},
 ]
 
 INSTRUCOES = f"""Você é o assistente do painel de projetos de um engenheiro mecânico que projeta
@@ -163,10 +188,8 @@ def perguntar(pergunta):
     print("Parei: passos demais.")
 
 
-for p in ["Quanto falta no PRJ070000?",                       # 66 h de 190, entrega 27/11
-        "Lança 2 horas de Modelagem 3D hoje no PRJ070000",  # vai pedir confirmação: responda s
-        "Quanto falta no PRJ070000?",                       # agora tem que dar 68 h
-        "Quanto falta no PRJ999999?",                       # não existe
-        "Qual a tensão correta da corrente da esteira?",]:
+for p in ["Salva o arquivo doc/novos/ficha-material-PRJ070000.pdf no projeto PRJ070000",
+          "Qual a densidade do material do PRJ070000?",
+          "Salva o arquivo doc/novos/nao-existe.pdf no PRJ070000"]:
     print("\n" + "=" * 60 + f"\nVOCÊ: {p}")
     perguntar(p)

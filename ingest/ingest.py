@@ -55,15 +55,15 @@ def vetores(textos):
     return [item.embedding for item in r.data]
 
 
-for pdf in sorted(PASTA.glob("*.pdf")):
-    # não indexar o mesmo PDF duas vezes
+def indexar_pdf(pdf, projeto_id=None):
+    """Indexa um PDF e devolve quantos trechos gravou (0 se já existia)."""
     ja_existe = banco.table("documentos").select(
         "id").eq("nome", pdf.name).execute()   # (2)
     if ja_existe.data:
-        print(f"pulando {pdf.name} (já indexado)")
-        continue
+        return 0
 
-    doc = banco.table("documentos").insert({"nome": pdf.name}).execute()
+    doc = banco.table("documentos").insert(
+        {"nome": pdf.name, "projeto_id": projeto_id}).execute()
     doc_id = doc.data[0]["id"]
 
     linhas = []
@@ -75,11 +75,16 @@ for pdf in sorted(PASTA.glob("*.pdf")):
                 {"documento_id": doc_id, "pagina": numero, "texto": trecho})
 
     if not linhas:
-        print(f"{pdf.name}: sem texto (PDF escaneado?)")
-        continue
+        return 0
 
     for linha, vetor in zip(linhas, vetores([l["texto"] for l in linhas])):
         linha["embedding"] = vetor
 
     banco.table("trechos").insert(linhas).execute()
-    print(f"{pdf.name}: {len(linhas)} trechos")
+    return len(linhas)
+
+
+if __name__ == "__main__":
+    for pdf in sorted(PASTA.glob("*.pdf")):
+        n = indexar_pdf(pdf)
+        print(f"{pdf.name}: {n} trechos" if n else f"pulando {pdf.name}")
