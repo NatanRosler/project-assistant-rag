@@ -1,4 +1,5 @@
 import json
+import math
 import os
 from datetime import date, timedelta
 from dotenv import load_dotenv
@@ -78,6 +79,20 @@ def lancar_horas(projeto, etapa, data, duracao_min):
     return {"ok": True, "mensagem": f"{duracao_min / 60:g} h lançados em {projeto}, {etapa}, {data}."}
 
 
+def potencia_helicoidal(vazao_m3h, densidade_t_m3, comprimento_m, inclinacao_graus, c0, diametro_m):
+    # vazão em t/h
+    Q = vazao_m3h * densidade_t_m3
+    # altura vencida
+    H = comprimento_m * math.sin(math.radians(inclinacao_graus))
+    p_mover = Q * c0 * comprimento_m / 367
+    p_elevar = Q * H / 367
+    p_vazio = diametro_m * comprimento_m / 20
+    total = p_mover + p_elevar + p_vazio
+    return {"vazao_t_h": round(Q, 2), "altura_m": round(H, 2),
+            "p_mover_kw": round(p_mover, 3), "p_elevar_kw": round(p_elevar, 3),
+            "p_vazio_kw": round(p_vazio, 3), "potencia_kw": round(total, 3)}
+
+
 def buscar_documentos(pergunta):
     vetor = ia.embeddings.create(
         model="openai/text-embedding-3-small", input=pergunta).data[0].embedding
@@ -97,7 +112,8 @@ FUNCOES = {"ver_projeto": ver_projeto,
            "calcular_dias_uteis": calcular_dias_uteis, "lancar_horas": lancar_horas,
            "buscar_documentos": buscar_documentos,
            "dias_uteis_entre": dias_uteis_entre,
-           "salvar_documento_projeto": salvar_documento_projeto}
+           "salvar_documento_projeto": salvar_documento_projeto,
+           "potencia_helicoidal": potencia_helicoidal}
 ESCRITA = {"lancar_horas", "salvar_documento_projeto"}
 
 # ---------- 2. O catálogo: a descrição que a IA recebe ----------
@@ -148,6 +164,22 @@ FERRAMENTAS = [
             "caminho": {"type": "string", "description": "Caminho do arquivo PDF, ex.: doc/novos/ficha.pdf"},
             "projeto": {"type": "string", "description": "Código do projeto, ex.: PRJ070000"}},
             "required": ["caminho", "projeto"]}}},
+    {"type": "function", "function": {
+        "name": "potencia_helicoidal",
+        "description": "Calcula a potência de um transportador helicoidal (rosca transportadora) "
+        "pelo método DIN: mover + elevar + em vazio, em kW. Antes de calcular, busque os dados "
+        "nos documentos do projeto (buscar_documentos): vazão, comprimento e inclinação costumam "
+        "estar na proposta; densidade e coeficiente c0 na ficha do material. Se algum dado não "
+        "estiver nos documentos nem na pergunta, peça ao usuário em vez de supor.",
+        "parameters": {"type": "object", "properties": {
+            "vazao_m3h": {"type": "number", "description": "Vazão volumétrica em m³/h"},
+            "densidade_t_m3": {"type": "number", "description": "Densidade aparente do material em t/m³"},
+            "comprimento_m": {"type": "number", "description": "Comprimento do transportador em metros"},
+            "inclinacao_graus": {"type": "number", "description": "Inclinação em graus (0 se horizontal)"},
+            "c0": {"type": "number", "description": "Coeficiente de resistência do material (ex.: 2,0 para farelos)"},
+            "diametro_m": {"type": "number", "description": "Diâmetro da rosca em METROS (250 mm = 0.25)"}},
+            "required": ["vazao_m3h", "densidade_t_m3", "comprimento_m",
+                         "inclinacao_graus", "c0", "diametro_m"]}}},
 ]
 
 INSTRUCOES = f"""Você é o assistente do painel de projetos de um engenheiro mecânico que projeta
@@ -156,6 +188,7 @@ Use as ferramentas para buscar dados e fazer contas. Nunca invente números nem 
 Informação técnica e de procedimento vem só dos documentos (buscar_documentos). Se não achar, diga que não encontrou.
 Ações que alteram dados: chame a ferramenta; o sistema pede a confirmação.
 Responda direto, em português, curto, sem comentar o que você está fazendo.
+Ao calcular, diga de qual documento veio cada dado de entrada.
 Cite a fonte em toda informação dos documentos, sempre com o nome completo: [nome-do-arquivo.pdf, p. X]. Nunca cite só a página."""
 
 # ---------- 3. O laço do agente ----------
@@ -189,7 +222,6 @@ def perguntar(pergunta):
 
 
 for p in ["Salva o arquivo doc/novos/ficha-material-PRJ070000.pdf no projeto PRJ070000",
-          "Qual a densidade do material do PRJ070000?",
-          "Salva o arquivo doc/novos/nao-existe.pdf no PRJ070000"]:
+          "Calcula a potência do transportador do PRJ070000 com rosca de 250 mm de diâmetro"]:
     print("\n" + "=" * 60 + f"\nVOCÊ: {p}")
     perguntar(p)
