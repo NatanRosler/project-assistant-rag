@@ -27,10 +27,13 @@ def salvar_documento_projeto(caminho, projeto):
     arquivo = Path(caminho)
     if not arquivo.exists():
         return {"erro": f"Arquivo {caminho} não encontrado."}
-    n = indexar_pdf(arquivo, p["id"])
-    if n == 0:
-        return {"erro": f"{arquivo.name} já estava salvo."}
-    return {"ok": True, "mensagem": f"{arquivo.name} salvo no {projeto} ({n} trechos)."}
+    r = indexar_pdf(arquivo, p["id"])
+    if r["situacao"] == "igual":
+        return {"erro": f"{arquivo.name} já estava salvo e não mudou."}
+    if r["situacao"] == "sem_texto":
+        return {"erro": f"{arquivo.name} não tem texto para ler (PDF escaneado?). Nada foi salvo."}
+    verbo = "atualizado (versão nova)" if r["situacao"] == "atualizado" else "salvo"
+    return {"ok": True, "mensagem": f"{arquivo.name} {verbo} no {projeto} ({r['trechos']} trecho{'s' if r['trechos'] != 1 else ''})."}
 
 
 def ver_projeto(codigo):
@@ -119,6 +122,14 @@ def salvar_calculo(projeto, tipo, entradas, fontes):
         resultado = CALCULOS[tipo](**entradas)        # refaz a conta em Python
     except TypeError as e:
         return {"erro": f"Entradas inválidas para {tipo}: {e}"}
+    # Não grava de novo um cálculo com as mesmas entradas no mesmo projeto
+    iguais = banco.table("calculos").select("entradas, criado_em") \
+        .eq("projeto_id", p["id"]).eq("tipo", tipo).execute().data
+    for c in iguais:
+        if c["entradas"] == entradas:
+            quando = date.fromisoformat(c["criado_em"][:10]).strftime("%d/%m/%Y")
+            return {"erro": f"Já existe um cálculo igual salvo em {quando}. Nada foi gravado.",
+                    "resultado": resultado}
     banco.table("calculos").insert({"projeto_id": p["id"], "tipo": tipo,
                                     "entradas": entradas, "resultado": resultado, "fontes": fontes}).execute()
     return {"ok": True, "resultado": resultado}

@@ -65,6 +65,11 @@ nomes = {p["codigo"]: f"{p['codigo']} · {p['descricao']}" for p in projetos}
 with st.sidebar:
     st.subheader("Assistente de Projetos")
     st.caption("Vetor Engenharia (fictícia)")
+    if st.button("Nova conversa", icon=":material/add_comment:", use_container_width=True):
+        st.session_state.mensagens = nova_conversa()
+        st.session_state.historico = []
+        st.session_state.pendente = None
+        st.rerun()
 
     # Escolha do projeto: o key="projeto" guarda a escolha no session_state sozinho
     codigo = st.radio("Projeto", list(nomes), format_func=nomes.get, key="projeto")

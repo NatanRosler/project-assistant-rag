@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 from pathlib import Path
@@ -56,35 +57,47 @@ def vetores(textos):
 
 
 def indexar_pdf(pdf, projeto_id=None):
-    """Indexa um PDF e devolve quantos trechos gravou (0 se já existia)."""
-    ja_existe = banco.table("documentos").select(
-        "id").eq("nome", pdf.name).execute()   # (2)
-    if ja_existe.data:
-        return 0
+    """Indexa um PDF e devolve {"trechos": n, "situacao": ...}.
 
-    doc = banco.table("documentos").insert(
-        {"nome": pdf.name, "projeto_id": projeto_id}).execute()
-    doc_id = doc.data[0]["id"]
+    situacao: "novo"       → o arquivo ainda não existia no banco
+              "atualizado" → já existia com esse nome, mas o conteúdo mudou: foi reindexado
+              "igual"      → já existia e não mudou nada: não faz nada
+              "sem_texto"  → o PDF não tem texto (escaneado?): não grava nada
+    """
+    impressao = hashlib.sha256(pdf.read_bytes()).hexdigest()  # muda se 1 byte do arquivo mudar
+    antigo = banco.table("documentos").select("id, hash, projeto_id") \
+        .eq("nome", pdf.name).execute().data
+    if antigo and antigo[0]["hash"] == impressao:
+        return {"trechos": 0, "situacao": "igual"}
 
-    linhas = []
-    for numero, pagina in enumerate(PdfReader(pdf).pages, start=1):             # (3)
+    # Primeiro lê o PDF e gera os vetores; só depois mexe no banco.
+    # Assim, se algo falhar no meio, a versão antiga continua lá inteira.
+    paginas = []
+    for numero, pagina in enumerate(PdfReader(pdf).pages, start=1):
         texto = limpar(pagina.extract_text() or "")
         for trecho in dividir(texto):
-            linhas.append(
-                # (4)
-                {"documento_id": doc_id, "pagina": numero, "texto": trecho})
+            paginas.append((numero, trecho))
+    if not paginas:
+        return {"trechos": 0, "situacao": "sem_texto"}
+    embeddings = vetores([trecho for _, trecho in paginas])
 
-    if not linhas:
-        return 0
+    situacao = "novo"
+    if antigo:
+        if projeto_id is None:            # reindexado pelo ingest: mantém o projeto que já tinha
+            projeto_id = antigo[0]["projeto_id"]
+        banco.table("documentos").delete().eq("id", antigo[0]["id"]).execute()  # trechos vão junto
+        situacao = "atualizado"
 
-    for linha, vetor in zip(linhas, vetores([l["texto"] for l in linhas])):
-        linha["embedding"] = vetor
-
+    doc = banco.table("documentos").insert(
+        {"nome": pdf.name, "projeto_id": projeto_id, "hash": impressao}).execute()
+    doc_id = doc.data[0]["id"]
+    linhas = [{"documento_id": doc_id, "pagina": numero, "texto": trecho, "embedding": vetor}
+              for (numero, trecho), vetor in zip(paginas, embeddings)]
     banco.table("trechos").insert(linhas).execute()
-    return len(linhas)
+    return {"trechos": len(linhas), "situacao": situacao}
 
 
 if __name__ == "__main__":
     for pdf in sorted(PASTA.glob("*.pdf")):
-        n = indexar_pdf(pdf)
-        print(f"{pdf.name}: {n} trechos" if n else f"pulando {pdf.name}")
+        r = indexar_pdf(pdf)
+        print(f"{pdf.name}: {r['situacao']} ({r['trechos']} trechos)")
