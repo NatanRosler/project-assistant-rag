@@ -1,10 +1,9 @@
 from experimentos.agente import avancar, decidir, nova_conversa
 import streamlit as st
 import sys
+from datetime import date
 from pathlib import Path
 
-# O Streamlit roda a partir da pasta app/; isto deixa a raiz do projeto visível
-# para o "from experimentos.agente import ..." funcionar (o mesmo papel do -m).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
@@ -24,9 +23,26 @@ if "mensagens" not in st.session_state:
 def mostrar_passos(passos):
     """Mostra as ferramentas usadas numa área recolhível."""
     if passos:
-        with st.expander(f"{len(passos)} passos"):
+        rotulo = "1 passo" if len(
+            passos) == 1 else f"{len(passos)} passos"
+        with st.expander(rotulo):
             for p in passos:
                 st.code(f"{p['nome']}({p['args']})", language=None)
+
+
+def descrever(c):
+    """Transforma o pedido da IA numa frase que qualquer pessoa entende."""
+    a = c["args"]
+    if c["nome"] == "lancar_horas":
+        data = date.fromisoformat(a["data"]).strftime("%d/%m/%Y")
+        return f"Lançar **{a['duracao_min'] / 60:g} h** de {a['etapa']} no **{a['projeto']}** em {data}"
+    if c["nome"] == "salvar_calculo":
+        # ex.: "Salvar o cálculo de potencia_helicoidal no PRJ070000 (6 entradas, com fontes)"
+        return f"Salvar o cálculo de **{a['tipo']}** no **{a['projeto']}**"
+    if c["nome"] == "salvar_documento_projeto":
+        # ex.: "Salvar o arquivo ficha-material-PRJ070000.pdf no PRJ070000"
+        return f"Salvar o arquivo {Path(a['caminho']).name}** no {a['projeto']}**"
+    return f"Executar {c['nome']}"   # qualquer ferramenta nova cai aqui
 
 
 def tratar(r, passos_antes=None):
@@ -53,9 +69,9 @@ if pend:
     with st.chat_message("assistant"):
         mostrar_passos(pend["passos"])
         c = pend["chamada"]
-        st.warning(
-            f"Posso executar **{c['nome']}**? Nada é gravado sem a sua confirmação.")
-        st.json(c["args"])
+        st.warning(f"{descrever(c)}?  \nNada é gravado sem a sua confirmação.")
+        with st.expander("Detalhes técnicos"):
+            st.json(c["args"])
         col1, col2 = st.columns(2)
         if col1.button("Confirmar", type="primary", use_container_width=True):
             with st.spinner("Gravando..."):
